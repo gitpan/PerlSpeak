@@ -1,0 +1,84 @@
+PerlSpeak version 0.01
+======================
+  PerlSpeak - Perl Module for text to speach with festival or cepstral
+
+  PerlSpeak.pm is Perl Module for text to speach with festival or cepstral.
+  One of these must be installed on your system in order for PerlSpeak.
+  Plans to include other tts systems in future releases.
+  PerlSpeak.pm was developed to use in the PerlSpeak system for blind linux users.
+  More information can be found at the authors website http://www.joekamphaus.net
+
+INSTALLATION
+
+To install this module type the following:
+
+   perl Makefile.PL
+   make
+   make test
+   make install
+
+DEPENDENCIES
+
+This module requires these other modules and libraries:
+
+  POSIX qw(:termios_h)
+
+COPYRIGHT AND LICENCE
+
+Copyright (C) 2007 by Joe Kamphaus
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.8.8 or,
+at your option, any later version of Perl 5 you may have available.
+
+
+HOW TO USE
+  #!/usr/bin/perl
+
+  use PerlSpeak;
+  
+  my $ps = PerlSpeak->new();
+  
+  # Set text to speach system "festival" is the default
+  $ps->{tts_engine} = "festival"; # or cepstrel 
+  
+  # Speaking file selectors
+  my $file = $ps->filepicker($ENV{HOME}); # Returns a file.
+  my $dir = $ps->dirpicker($ENV{HOME}); # Returns a directory.
+  
+  $ps->say("Hello World!"); # The computer talks.
+
+  # Returns the next character typed on the keyboard
+  # May take 2 or 3 calls for escape sequences.
+  print $ps->getch(); 
+
+  # Make some sub refs to pass to menu  
+  my $email = sub {
+	print "Email\n";
+  };
+  my $internet = sub {
+	print "Internet\n";
+  };
+  my $docs = sub {
+	print "Documents\n"
+  };
+  my $mp3 = sub {
+	print "MP3\n";	
+  };
+  my $cdaudio = sub {
+	print "CD Audio\n"
+  };
+  my $help = sub {
+	print "Browse Help\n"
+  };
+
+  # menu is a talking menu
+  # Pass menu a hash of "text to speak" => $callback pairs
+  $ps->menu(
+	"E-mail Menu" => $email,
+	"Internet Menu" => $internet,
+	"Documents Menu" => $docs,
+	"M P 3 audio" => $mp3,
+	"C D audio" => $cdaudio,
+	"Browse help files" => $help,
+  };
