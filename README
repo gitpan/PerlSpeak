@@ -8,6 +8,7 @@ PerlSpeak version 0.01
   PerlSpeak.pm was developed to use in the PerlSpeak system for blind linux users.
   More information can be found at the authors website http://www.joekamphaus.net
 
+
 INSTALLATION
 
 To install this module type the following:
@@ -17,11 +18,6 @@ To install this module type the following:
    make test
    make install
 
-DEPENDENCIES
-
-This module requires these other modules and libraries:
-
-  POSIX qw(:termios_h)
 
 COPYRIGHT AND LICENCE
 
@@ -32,6 +28,55 @@ it under the same terms as Perl itself, either Perl version 5.8.8 or,
 at your option, any later version of Perl 5 you may have available.
 
 
+CHANGES
+
+1/9/2007
+
+* Fixed error handling for opendir and readdir.
+
+* Added property tts_command => $string 
+    (insert "text_arg" where the text to speak should be.)
+
+* Added property no_dot_files => $boolean default is 1
+    (Set to 0 to show hidden files)
+
+* Fixed bug in tts_engine => "cepstral" (previously misspelled as cepstrel)
+
+* Added funtionality to traverse directory tree up as well as down.
+    (user can now use the arrow keys for browsing and selecting
+    up and down browses files in current directory. Right selects the 
+    file or directory. Left moves up one directory like "cd ..")
+
+
+
+METHODS
+
+ $ps = PerlSpeak->new(property => value, ...);
+
+ $ps->say("Text to speak.");
+
+ $path = $ps->filepicker("/start/directory");
+
+ $path = $ps->dirpicker("/start/directory");
+
+ $chr = $ps->getchr(); # Returns next character typed on keyboard
+
+ # An audio menu executes callback when item is selected 
+ $ps->menu("Text to speak" => $callback, ...) 
+
+
+PROPERTIES
+
+ $ps->{tts_engine} => "festival" or "cepstral";
+ 
+ $ps->{tts_command} => "command text_arg";
+ 
+ $ps->{no_dot_files} => $boolean; # Default is 1
+ 
+ $ps->{hide_extentions} => $boolean;  # Default is 0
+ 
+
+
 HOW TO USE
   #!/usr/bin/perl
 
@@ -39,9 +84,14 @@ HOW TO USE
   
   my $ps = PerlSpeak->new();
   
-  # Set text to speach system "festival" is the default
-  $ps->{tts_engine} = "festival"; # or cepstrel 
-  
+  # Set properties
+  $ps->{tts_engine} = "festival"; # or cepstrel
+  # Optionally set your own tts command use text_arg where the text goes
+  $ps->{tts_command} => ""; 
+  $ps->{no_dot_files} => 1;
+  $ps->{hide_extentions} => 0;
+    
+   
   # Speaking file selectors
   my $file = $ps->filepicker($ENV{HOME}); # Returns a file.
   my $dir = $ps->dirpicker($ENV{HOME}); # Returns a directory.
@@ -82,3 +132,6 @@ HOW TO USE
 	"C D audio" => $cdaudio,
 	"Browse help files" => $help,
   };
+
+
+ 

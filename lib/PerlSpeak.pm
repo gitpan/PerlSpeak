@@ -4,22 +4,30 @@ use strict;
 use warnings;
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
-$VERSION = '0.01';
+$VERSION = '0.03';
 
 
 sub new {
 	my $pkg = shift;
-	my $self = {"tts_engine" => "festival",	@_};
+	my $self = {
+		"tts_engine" => "festival",
+		"tts_command" => "",
+		"no_dot_files" => 1,
+		"hide_extentions" => 0,
+		@_};
 	return bless $self, $pkg;
 }
 
 sub say {
 	my $self = shift;
 	my $arg = shift;
-	if ($self->{tts_engine} eq "festival"){
+	if ($self->{tts_command}){
+		my $command = $self->{tts_command};
+		$command =~s/text_arg/\"$arg\"/ 
+	}elsif ($self->{tts_engine} eq "festival"){
 		print "$arg\n";
 		system "echo \"$arg\" | festival --tts";
-	}elsif ($self->{tts_engine} eq "cepstrel"){
+	}elsif ($self->{tts_engine} eq "cepstral"){
 		system "/opt/swift/bin/swift \"$arg\"";
 	}
 }
@@ -57,10 +65,11 @@ sub filepicker {
 	my $flter = "";
 	my $answ = "";
 	my @tmp = ();
+	my @lst = ();
 	while (not $file) {
 		my $count = 0;
-		opendir DH, $d;
-		my @dirlst = (sort readdir DH);
+		opendir DH, $d or die("Error opening directory: $d\n   $!");
+		my @dirlst = (sort readdir DH) or die("Error reading directory: $d\n   $!");
 		my $od = $d;
 		while ((not $file) and ($od eq $d)) {
 			my $f = $dirlst[$count];
@@ -81,14 +90,33 @@ sub filepicker {
 						$count-- if $answ =~/A/;
 						$count = 0 if $count == scalar(@dirlst);
 						$count = scalar(@dirlst) - 1 if $count < 0;
+						if ($answ =~/C/){
+							$d = "$d/$f";
+							last;
+						}
+						if ($answ =~/D/){
+							@lst = split '/', $d;
+							pop @lst;
+							$d = join '/', @lst;
+							$d = '/' if $d eq "";
+							next;
+						}
 					}
 				}elsif ((ord($answ)==10) or (ord($answ)==89) or (ord($answ)==121)){
 					$file = $self->filepicker("$d/$f");
+				}elsif ((ord($answ)==85) or (ord($answ)==117)){
+					@lst = split '/', $d;
+					pop @lst;
+					$d = join '/', @lst;
+					$d = '/' if $d eq "";
+					next;				
 				}
 			}elsif (-f"$d/$f"){
 				$flter = $f;
-				$flter =~ s/_/ /g;
-				$flter =~ s/\.[\w]*//;
+				if ($self->{hide_extentions}){
+					$flter =~ s/_/ /g;
+					$flter =~ s/\.[\w]*//;
+				}
 				$self->say("Select File $flter?");
 				$answ = $self->getch();
 				if (ord($answ)==27){
@@ -99,6 +127,17 @@ sub filepicker {
 						$count-- if $answ =~/A/;
 						$count = 0 if $count == scalar(@dirlst);
 						$count = scalar(@dirlst) - 1 if $count < 0;
+						if ($answ =~/C/){
+							$file = "$d/$f";
+							last;
+						}
+						if ($answ =~/D/){
+							@lst = split '/', $d;
+							pop @lst;
+							$d = join '/', @lst;
+							$d = '/' if $d eq "";
+							next;
+						}
 					}
 				}elsif ((ord($answ)==10) or (ord($answ)==89) or (ord($answ)==121)){
 					$file = "$d/$f";
@@ -116,16 +155,19 @@ sub dirpicker {
 	my $d = shift;
 	my $folder = "";
 	my $answ = "";
+	my @lst = ();
 	while ($folder eq "") {
 		my $count = 0;
-		opendir DH, $d;
-		my @dirlst = (sort readdir DH);
+		opendir DH, $d or die("Error opening directory: $d\n   $!");
+		my @dirlst = (sort readdir DH) or die("Error reading directory: $d\n   $!");
 		closedir DH;
 		while ($folder eq "") {
 			my $f = $dirlst[$count];
 			if ($f =~ /^\./){
-				$count++;
-				next;
+				if ($f eq "." or $f eq ".." or $self->{no_dot_files}){
+					$count++;
+					next;
+				}
 			}
 			if (-d"$d/$f"){
 				$self->say("Select Folder $f?");
@@ -138,10 +180,28 @@ sub dirpicker {
 						$count-- if $answ =~/A/;
 						$count = 0 if $count == scalar(@dirlst);
 						$count = scalar(@dirlst) - 1 if $count < 0;
+						if ($answ =~/C/){
+							$folder = "$d/$f";
+						}
+						if ($answ =~/D/){
+							@lst = split '/', $d;
+							pop @lst;
+							$d = join '/', @lst;
+							$d = '/' if $d eq "";
+							last;
+						}
+
 					}
 				}elsif ((ord($answ)==10) or (ord($answ)==89) or (ord($answ)==121)){
 					$folder = "$d/$f";
+				}elsif ((ord($answ)==85) or (ord($answ)==117)){
+					@lst = split '/', $d;
+					pop @lst;
+					$d = join '/', @lst;
+					$d = '/' if $d eq "";
+					next;
 				}
+
 			}else{
 				next;
 			}
@@ -150,21 +210,17 @@ sub dirpicker {
 	if ($folder eq "") {
 		$self->say("There are no folders to select.");
 	}
-	
 	return $folder;
 }
 
 sub getch {
 	my $self = shift;
         my $fd_stdin = fileno(STDIN);
-
         my $term = POSIX::Termios->new();
         $term->getattr($fd_stdin);
         my $oterm = $term->getlflag();
-
         my $echo = ECHO | ECHOK | ICANON;
         my $noecho = $oterm & ~$echo;
-
         my $key = '';
         $term->setlflag($noecho);
         $term->setcc(VTIME, 1);
@@ -178,7 +234,6 @@ sub getch {
 1;
 
 __END__
-# Below is stub documentation for your module. You'd better edit it!
 
 =head1 NAME
 
@@ -190,9 +245,14 @@ PerlSpeak - Perl Module for text to speach with festival or cepstral
   
   my $ps = PerlSpeak->new();
   
-  # Set text to speach system "festival" is the default
-  $ps->{tts_engine} = "festival"; # or cepstrel 
-  
+  # Set properties
+  $ps->{tts_engine} = "festival"; # or cepstrel
+  # Optionally set your own tts command use text_arg where the text goes
+  $ps->{tts_command} => ""; 
+  $ps->{no_dot_files} => 1;
+  $ps->{hide_extentions} => 0;
+    
+   
   # Speaking file selectors
   my $file = $ps->filepicker($ENV{HOME}); # Returns a file.
   my $dir = $ps->dirpicker($ENV{HOME}); # Returns a directory.
@@ -235,7 +295,34 @@ PerlSpeak - Perl Module for text to speach with festival or cepstral
   };
 
 
+=head2 METHODS
 
+ $ps = PerlSpeak->new(property => value, ...);
+
+ $ps->say("Text to speak.");
+
+ $path = $ps->filepicker("/start/directory");
+
+ $path = $ps->dirpicker("/start/directory");
+
+ $chr = $ps->getchr(); # Returns next character typed on keyboard
+
+ # An audio menu executes callback when item is selected 
+ $ps->menu("Text to speak" => $callback, ...) 
+
+
+=head2 PROPERTIES
+
+ $ps->{tts_engine} => "festival" or "cepstral";
+ 
+ $ps->{tts_command} => "command text_arg";
+ 
+ $ps->{no_dot_files} => $boolean; # Default is 1
+ 
+ $ps->{hide_extentions} => $boolean;  # Default is 0
+ 
+ 
+ 
 =head1 DESCRIPTION
 
   PerlSpeak.pm is Perl Module for text to speach with festival or cepstral.
@@ -244,9 +331,29 @@ PerlSpeak - Perl Module for text to speach with festival or cepstral
   PerlSpeak.pm was developed to use in the PerlSpeak system for blind linux users.
   More information can be found at the authors website http://www.joekamphaus.net
 
-=head2 EXPORT
 
+=head1 CHANGES
 
+1/9/2007 ver 0.03
+
+* Fixed error handling for opendir and readdir.
+
+* Added property tts_command => $string 
+    (insert "text_arg" where the text to speak should be.)
+
+* Added property no_dot_files => $boolean default is 1
+    (Set to 0 to show hidden files)
+
+* Fixed bug in tts_engine => "cepstral" (previously misspelled as cepstrel)
+
+* Added funtionality to traverse directory tree up as well as down.
+    (user can now use the arrow keys for browsing and selecting
+    up and down browses files in current directory. Right selects the 
+    file or directory. Left moves up one directory like "cd ..")
+
+* Added property hide_extentions => $boolean to turn off speaking of file
+    extensions with the filepicker method. Default is 0.
+    
 
 
 =head1 SEE ALSO
