@@ -1,10 +1,10 @@
 package PerlSpeak;
-use 5.008008;
+use 5.006;
 use strict;
 use warnings;
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
-$VERSION = '0.03';
+$VERSION = '0.50';
 
 
 sub new {
@@ -12,8 +12,15 @@ sub new {
 	my $self = {
 		"tts_engine" => "festival",
 		"tts_command" => "",
+		"tts_file_command" => "",
+		"file2wave_command" => "",
+		"make_readable" => "[_\\]",
 		"no_dot_files" => 1,
 		"hide_extentions" => 0,
+		"browsable" => 1,
+		"dir_return" => 1,
+		"file_prefix" => "File",
+		"dir_prefix" => "Folder",
 		@_};
 	return bless $self, $pkg;
 }
@@ -21,14 +28,58 @@ sub new {
 sub say {
 	my $self = shift;
 	my $arg = shift;
+	if (-e $arg){
+		$self->readfile($arg);
+		return 0;
+	}
 	if ($self->{tts_command}){
 		my $command = $self->{tts_command};
-		$command =~s/text_arg/\"$arg\"/ 
+		$command =~s/text_arg/\"$arg\"/ ;
+		system $command or die "Error with tts_command";
 	}elsif ($self->{tts_engine} eq "festival"){
-		print "$arg\n";
 		system "echo \"$arg\" | festival --tts";
 	}elsif ($self->{tts_engine} eq "cepstral"){
-		system "/opt/swift/bin/swift \"$arg\"";
+		system "swift \"$arg\"";
+	}
+}
+
+sub readfile {
+	my $self = shift;
+	my $arg = shift;
+	if (-e $arg){
+		if ($self->{tts_file_command}){
+			my $command = $self->{tts_file_command};
+			$command =~s/file_arg/$arg/;
+			system $command;
+		}elsif ($self->{tts_engine} eq "festival"){
+			system "festival --tts $arg";
+		}elsif ($self->{tts_engine} eq "cepstral"){
+			system "$self->{path_to_tts}swift -f $arg";
+		}else {
+			$self->say("ERROR! with tts engine or tts  file command.") & die "ERROR! with tts_engine or tts_file_command.";
+		}	
+	} else {
+		$self->say("ERROR! $arg is not a file.") & die "ERROR! $arg is not a file.";
+	}
+}
+
+sub file2wave {
+	my $self = shift;
+	my $in = shift;
+	my $out = shift;
+	if (-e $in){
+		if ($self->{file2wave_command}){
+			my $command = $self->{file2wave_command};
+			$command =~s/IN/$in/;
+			$command =~s/OUT/$out/;
+			system "$command";
+		} elsif ($self->{tts_engine} eq "festival") {
+			system "text2wave -otype riff -o $out $in";
+		} elsif ($self->{tts_engine} eq "cepstral") {
+			system "swift -f $in -o $out";
+		}
+	} else {
+		$self->say("ERROR! $in is not a file.") & die "ERROR! $in is not a file.";
 	}
 }
 
@@ -52,8 +103,8 @@ sub menu {
 			}
 
 		}elsif ((ord($answ)==10) or (ord($answ)==89) or (ord($answ)==121)){
-			&{$var_hash{$keys[$count]}};
 			$command = 1;
+			&{$var_hash{$keys[$count]}};
 		}
 	}
 }
@@ -73,14 +124,14 @@ sub filepicker {
 		my $od = $d;
 		while ((not $file) and ($od eq $d)) {
 			my $f = $dirlst[$count];
-			if ($f =~ /^\./){
+			if (($f eq ".") or ($f eq "..") or ($self->{no_dot_files} and $f =~/^\./)) {
 				$count++;
 				next;
 			}
 			if (-d"$d/$f"){
 				$flter = $f;
 				$flter =~ s/_/ /g;
-				$self->say("Select Folder $flter?");
+				$self->say("$self->{dir_prefix} $flter?");
 				$answ = $self->getch();
 				if (ord($answ)==27){
 					$answ  = $self->getch();
@@ -90,48 +141,11 @@ sub filepicker {
 						$count-- if $answ =~/A/;
 						$count = 0 if $count == scalar(@dirlst);
 						$count = scalar(@dirlst) - 1 if $count < 0;
-						if ($answ =~/C/){
+						if (($answ =~/C/) && ($self->{browsable})) {
 							$d = "$d/$f";
 							last;
 						}
-						if ($answ =~/D/){
-							@lst = split '/', $d;
-							pop @lst;
-							$d = join '/', @lst;
-							$d = '/' if $d eq "";
-							next;
-						}
-					}
-				}elsif ((ord($answ)==10) or (ord($answ)==89) or (ord($answ)==121)){
-					$file = $self->filepicker("$d/$f");
-				}elsif ((ord($answ)==85) or (ord($answ)==117)){
-					@lst = split '/', $d;
-					pop @lst;
-					$d = join '/', @lst;
-					$d = '/' if $d eq "";
-					next;				
-				}
-			}elsif (-f"$d/$f"){
-				$flter = $f;
-				if ($self->{hide_extentions}){
-					$flter =~ s/_/ /g;
-					$flter =~ s/\.[\w]*//;
-				}
-				$self->say("Select File $flter?");
-				$answ = $self->getch();
-				if (ord($answ)==27){
-					$answ  = $self->getch();
-					if (ord($answ)==91){
-						$answ  = $self->getch();
-						$count++ if $answ =~/B/;
-						$count-- if $answ =~/A/;
-						$count = 0 if $count == scalar(@dirlst);
-						$count = scalar(@dirlst) - 1 if $count < 0;
-						if ($answ =~/C/){
-							$file = "$d/$f";
-							last;
-						}
-						if ($answ =~/D/){
+						if (($answ =~/D/) && ($self->{browsable})) {
 							@lst = split '/', $d;
 							pop @lst;
 							$d = join '/', @lst;
@@ -141,6 +155,48 @@ sub filepicker {
 					}
 				}elsif ((ord($answ)==10) or (ord($answ)==89) or (ord($answ)==121)){
 					$file = "$d/$f";
+					return $file;
+				}elsif ((ord($answ)==85) or (ord($answ)==117)){
+					@lst = split '/', $d;
+					pop @lst;
+					$d = join '/', @lst;
+					$d = '/' if $d eq "";
+					next;				
+				}
+			}elsif (-f "$d/$f"){
+				$flter = $f;
+				if ($self->{hide_extentions}){
+					$flter =~ s/\.[\w]*$//;
+				}
+				if ($self->{make_readable}) {
+					my $pattern = $self->{make_readable};
+					$flter =~ s/$pattern/ /g;
+				}
+				$self->say("$self->{file_prefix} $flter?");
+				$answ = $self->getch();
+				if (ord($answ)==27){
+					$answ  = $self->getch();
+					if (ord($answ)==91){
+						$answ  = $self->getch();
+						$count++ if $answ =~/B/;
+						$count-- if $answ =~/A/;
+						$count = 0 if $count == scalar(@dirlst);
+						$count = scalar(@dirlst) - 1 if $count < 0;
+						if (($answ =~/C/) && ($self->{browsable})) {
+							$file = "$d/$f";
+							last;
+						}
+						if (($answ =~/D/) && ($self->{browsable})) {
+							@lst = split '/', $d;
+							pop @lst;
+							$d = join '/', @lst;
+							$d = '/' if $d eq "";
+							next;
+						}
+					}
+				}elsif ((ord($answ)==10) or (ord($answ)==89) or (ord($answ)==121)){
+					$file = "$d/$f";
+					return $file;
 					last;
 				}
 			}else{print "Error $d/$f";}
@@ -170,7 +226,7 @@ sub dirpicker {
 				}
 			}
 			if (-d"$d/$f"){
-				$self->say("Select Folder $f?");
+				$self->say($f);
 				$answ = $self->getch();
 				if (ord($answ)==27){
 					$answ  = $self->getch();
@@ -237,9 +293,148 @@ __END__
 
 =head1 NAME
 
-PerlSpeak - Perl Module for text to speach with festival or cepstral
+ PerlSpeak - Perl Module for text to speach with festival, cepstral and others.
 
 =head1 SYNOPSIS
+
+ my $ps = PerlSpeak->new([property => value, property => value, ...]);
+
+=head2 METHODS
+
+ $ps = PerlSpeak->new([property => value, property => value, ...]);
+ # Creates a new instance of the PerlSpeak object.
+
+ $ps->say("Text to speak.");
+ $ps->say("file_name");
+ # The basic text to speach interface.
+ 
+ $ps->readfile("file_name");
+ # Reads contents of a text file.
+ 
+ $ps->file2wave("text_file_in", "audio_file_out");
+ # Converts a text file to an audio file.
+
+ $path = $ps->filepicker("/start/directory");
+ # An audio file selector that returns a path to a file. If "dir_return" is true
+ # "filepicker" may also return the path to a directory.
+
+ $path = $ps->dirpicker("/start/directory");
+ # An audio directory selector that returns a path to a directroy.
+
+ $chr = $ps->getchr(); 
+ # Returns next character typed on keyboard
+
+ $ps->menu("Text to speak" => $callback, ...) 
+ # An audio menu executes callback when item is selected 
+
+
+=head2 PROPERTIES
+
+ # The default property settings should work in most cases. The exception is
+ # if you want to use a tts system other than festival or cepstral. The rest
+ # of the properties are included because I found them usefull in some instances.
+
+ $ps->{tts_engine} => "festival" or "cepstral"; # Default is "festival"
+ # Other tts engines can be used by using the tts command properties.
+ 
+ $ps->{tts_command} => "command text_arg"; # Default is ""
+ # Command to read a text string. "text_arg" = text string.
+ 
+ $ps->{tts_file_command} => "command file_arg" # Default is ""
+ # Command to read a text file. "file_arg"  = path to text file to be read.
+ 
+ $ps->{file2wave_command} => "command IN OUT"; # Default is ""
+ # Command for text file to wave file. "IN" = input file "OUT" = output file.
+ # Not needed if tts_engine is festival" or "cepstral.
+ 
+ $ps->{no_dot_files} => $boolean; # Default is 1
+ $ Hides files that begin with a '.'
+ 
+ $ps->{hide_extentions} => $boolean;  # Default is 0
+ # Will hide file extensions.
+ # NOTE: If hiding extensions the no_dot_files property must be set to 1.
+ 
+ $ps->{make_readable} => "regexp pattern"; # default is "[_\\]"  
+ # will substitute spaces for regexp pattern 
+ 
+ $ps->{browsable} => $boolean; # Default is 1
+ # If true filepicker can browse other directories via the right and left arrows. 
+ 
+ $ps->{dir_return} => $boolean; # Default is 1
+ # If true filepicker may return directories as well as files.
+ 
+ $ps->{file_prefix} => $text; # Default is "File"
+ # For filepicker. Sets text to speak prior to file name. 
+ 
+ $ps->{dir_prefix} => "text"; # Default is "Folder"
+ # For filepicker and dirpicker. Sets text to speak prior to directory name. 
+
+ 
+=head1 DESCRIPTION
+
+  PerlSpeak.pm is Perl Module for text to speach with festival or cepstral.
+  (Other tts systems may be used by setting the tts command properties).
+  PerlSpeak.pm includes several useful interface methods like an audio file 
+  selector and menu system. PerlSpeak.pm was developed to use in the 
+  Linux Speaks system, an audio interface to linux for blind users. 
+  More information can be found at the authors website http://www.joekamphaus.net
+
+
+=head1 CHANGES
+
+ 1/9/2007 ver 0.03
+
+ * Fixed error handling for opendir and readdir.
+
+ * Added property tts_command => $string 
+    (insert "text_arg" where the text to speak should be.)
+
+ * Added property no_dot_files => $boolean default is 1
+    (Set to 0 to show hidden files)
+
+ * Fixed bug in tts_engine => "cepstral" (previously misspelled as cepstrel)
+
+ * Added funtionality to traverse directory tree up as well as down.
+    (user can now use the arrow keys for browsing and selecting
+    up and down browses files in current directory. Right selects the 
+    file or directory. Left moves up one directory like "cd ..")
+
+ * Added property hide_extentions => $boolean to turn off speaking of file
+    extensions with the filepicker method. Default is 0.
+    (NOTE: If hiding extensions the no_dot_files property must be set to 1)
+    
+ * Added property "make_readable" which takes a regular expression as an argument.
+    PerlSpeak.pm substitues a space for characters that match expression.  The
+    default is "[_\\]" which substitutes a space for "\" and "_".
+
+
+
+ 1/9/2007 ver 0.50
+ 
+ * Added funtionality for reading a text file. Method "say" will now take
+    text or a file name as an argument. Also added method "readfile" which
+    takes a file name as an argument. The property tts_file_command was also
+    added to accomodate tts systems other than festival or cepstral.
+
+ * Added funtionality for converting a text file to a wave file via the
+    "file2wave" method and optionally the "file2wave_command" property.
+ 
+ * Added properties "file_prefix" and "dir_prefix" to enable changing
+    text to speak prior to file and directory names in the "filepicker"
+    and "dirpicker" methods.
+    
+ * Added "browsable", a boolean property which will togle the browsable feature
+    of the "filepicker" method. 
+    
+ * Added "dir_return", a boolean property which will allows the "filepicker" 
+    method to return the path to a directory as well as the path to a file.
+    
+ * Changed required version of perl to 5.6. I see no reason why PerlSpeak.pm
+    should not work under perl 5.6, however, this has not yet been tested. If
+    you have problems with PerlSpeak on your version of perl let me know.
+    
+    
+=head1 EXAMPLE
 
   use PerlSpeak;
   
@@ -253,7 +448,7 @@ PerlSpeak - Perl Module for text to speach with festival or cepstral
   $ps->{hide_extentions} => 0;
     
    
-  # Speaking file selectors
+  # Audio file selectors
   my $file = $ps->filepicker($ENV{HOME}); # Returns a file.
   my $dir = $ps->dirpicker($ENV{HOME}); # Returns a directory.
   
@@ -283,7 +478,7 @@ PerlSpeak - Perl Module for text to speach with festival or cepstral
 	print "Browse Help\n"
   };
 
-  # menu is a talking menu
+  # menu is a audio menu
   # Pass menu a hash of "text to speak" => $callback pairs
   $ps->menu(
 	"E-mail Menu" => $email,
@@ -295,82 +490,26 @@ PerlSpeak - Perl Module for text to speach with festival or cepstral
   };
 
 
-=head2 METHODS
-
- $ps = PerlSpeak->new(property => value, ...);
-
- $ps->say("Text to speak.");
-
- $path = $ps->filepicker("/start/directory");
-
- $path = $ps->dirpicker("/start/directory");
-
- $chr = $ps->getchr(); # Returns next character typed on keyboard
-
- # An audio menu executes callback when item is selected 
- $ps->menu("Text to speak" => $callback, ...) 
-
-
-=head2 PROPERTIES
-
- $ps->{tts_engine} => "festival" or "cepstral";
- 
- $ps->{tts_command} => "command text_arg";
- 
- $ps->{no_dot_files} => $boolean; # Default is 1
- 
- $ps->{hide_extentions} => $boolean;  # Default is 0
- 
- 
- 
-=head1 DESCRIPTION
-
-  PerlSpeak.pm is Perl Module for text to speach with festival or cepstral.
-  One of these must be installed on your system in order for PerlSpeak.
-  Plans to include other tts systems in future releases.
-  PerlSpeak.pm was developed to use in the PerlSpeak system for blind linux users.
-  More information can be found at the authors website http://www.joekamphaus.net
-
-
-=head1 CHANGES
-
-1/9/2007 ver 0.03
-
-* Fixed error handling for opendir and readdir.
-
-* Added property tts_command => $string 
-    (insert "text_arg" where the text to speak should be.)
-
-* Added property no_dot_files => $boolean default is 1
-    (Set to 0 to show hidden files)
-
-* Fixed bug in tts_engine => "cepstral" (previously misspelled as cepstrel)
-
-* Added funtionality to traverse directory tree up as well as down.
-    (user can now use the arrow keys for browsing and selecting
-    up and down browses files in current directory. Right selects the 
-    file or directory. Left moves up one directory like "cd ..")
-
-* Added property hide_extentions => $boolean to turn off speaking of file
-    extensions with the filepicker method. Default is 0.
-    
-
-
 =head1 SEE ALSO
 
-
   More information can be found at the authors website http://www.joekamphaus.net
+  
+  The Festival Speech Synthesis System can be found at 
+    http://www.cstr.ed.ac.uk/projects/festival/
+  
+  Reasonably priced high quality proprietary software voices from Cepstral 
+  can be found at http://www.cepstral.com.
 
 =head1 AUTHOR
 
-joe, E<lt>joe@joekamphaus.netE<gt>
+Joe Kamphaus, E<lt>joe@joekamphaus.netE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
 Copyright (C) 2007 by Joe Kamphaus
 
 This library is free software; you can redistribute it and/or modify
-it under the same terms as Perl itself, either Perl version 5.8.8 or,
+it under the same terms as Perl itself, either Perl version 5.6 or,
 at your option, any later version of Perl 5 you may have available.
 
 

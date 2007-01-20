@@ -1,12 +1,13 @@
-PerlSpeak version 0.01
+PerlSpeak version 0.50
 ======================
-  PerlSpeak - Perl Module for text to speach with festival or cepstral
+  PerlSpeak - Perl Module for text to speach with festival, cepstral and others.
 
   PerlSpeak.pm is Perl Module for text to speach with festival or cepstral.
-  One of these must be installed on your system in order for PerlSpeak.
-  Plans to include other tts systems in future releases.
-  PerlSpeak.pm was developed to use in the PerlSpeak system for blind linux users.
-  More information can be found at the authors website http://www.joekamphaus.net
+  (Other tts systems may be used by setting the tts command properties).
+  PerlSpeak.pm includes several useful interface methods like an audio file 
+  selector and menu system. PerlSpeak.pm was developed to use in the 
+  Linux Speaks system, an audio interface to linux. More information can be 
+  found at the authors website http://www.joekamphaus.net
 
 
 INSTALLATION
@@ -21,82 +22,110 @@ To install this module type the following:
 
 COPYRIGHT AND LICENCE
 
-Copyright (C) 2007 by Joe Kamphaus
+ Copyright (C) 2007 by Joe Kamphaus
 
-This library is free software; you can redistribute it and/or modify
-it under the same terms as Perl itself, either Perl version 5.8.8 or,
-at your option, any later version of Perl 5 you may have available.
+ This library is free software; you can redistribute it and/or modify
+ it under the same terms as Perl itself, either Perl version 5.8.8 or,
+ at your option, any later version of Perl 5 you may have available.
 
 
-CHANGES
+SYNOPSIS
 
-1/9/2007
-
-* Fixed error handling for opendir and readdir.
-
-* Added property tts_command => $string 
-    (insert "text_arg" where the text to speak should be.)
-
-* Added property no_dot_files => $boolean default is 1
-    (Set to 0 to show hidden files)
-
-* Fixed bug in tts_engine => "cepstral" (previously misspelled as cepstrel)
-
-* Added funtionality to traverse directory tree up as well as down.
-    (user can now use the arrow keys for browsing and selecting
-    up and down browses files in current directory. Right selects the 
-    file or directory. Left moves up one directory like "cd ..")
-
+ my $ps = PerlSpeak->new([property => value, property => value, ...]);
 
 
 METHODS
 
- $ps = PerlSpeak->new(property => value, ...);
+ $ps = PerlSpeak->new([property => value, property => value, ...]);
+  Creates a new instance of the PerlSpeak object.
 
  $ps->say("Text to speak.");
+ $ps->say("file_name");
+  The basic text to speach interface.
+ 
+ $ps->readfile("file_name");
+  Reads contents of a text file.
+ 
+ $ps->file2wave("text_file_in", "audio_file_out");
+  Converts a text file to an audio file.
 
  $path = $ps->filepicker("/start/directory");
+  An audio file selector that returns a path to a file. If "dir_return" is true
+  "filepicker" may also return the path to a directory.
 
  $path = $ps->dirpicker("/start/directory");
+  An audio directory selector that returns a path to a directroy.
 
- $chr = $ps->getchr(); # Returns next character typed on keyboard
+ $chr = $ps->getchr(); 
+  Returns next character typed on keyboard
 
- # An audio menu executes callback when item is selected 
  $ps->menu("Text to speak" => $callback, ...) 
+  An audio menu executes callback when item is selected 
 
 
 PROPERTIES
 
- $ps->{tts_engine} => "festival" or "cepstral";
+  The default property settings should work in most cases. The exception is
+  if you want to use a tts system other than festival or cepstral. The rest
+  of the properties are included because I found them usefull in some instances.
+
+ $ps->{tts_engine} => "festival" or "cepstral";  Default is "festival"
+  Other tts engines can be used by using the tts command properties.
  
- $ps->{tts_command} => "command text_arg";
+ $ps->{tts_command} => "command text_arg";  Default is ""
+  Command to read a text string. "text_arg" = text string.
  
- $ps->{no_dot_files} => $boolean; # Default is 1
+ $ps->{tts_file_command} => "command file_arg"  Default is ""
+  Command to read a text file. "file_arg"  = path to text file to be read.
  
- $ps->{hide_extentions} => $boolean;  # Default is 0
+ $ps->{file2wave_command} => "command IN OUT";  Default is ""
+  Command for text file to wave file. "IN" = input file "OUT" = output file.
+  Not needed if tts_engine is festival" or "cepstral.
+ 
+ $ps->{no_dot_files} => $boolean;  Default is 1
+ $ Hides files that begin with a '.'
+ 
+ $ps->{hide_extentions} => $boolean;   Default is 0
+  Will hide file extensions.
+  NOTE: If hiding extensions the no_dot_files property must be set to 1.
+ 
+ $ps->{make_readable} => "regexp pattern";  default is "[_\\]"  
+  will substitute spaces for regexp pattern 
+ 
+ $ps->{browsable} => $boolean;  Default is 1
+  If true filepicker can browse other directories via the right and left arrows. 
+ 
+ $ps->{dir_return} => $boolean;  Default is 1
+  If true filepicker may return directories as well as files.
+ 
+ $ps->{file_prefix} => $text;  Default is "File"
+  For filepicker. Sets text to speak prior to file name. 
+ 
+ $ps->{dir_prefix} => "text";  Default is "Folder"
+  For filepicker and dirpicker. Sets text to speak prior to directory name. 
  
 
 
 HOW TO USE
-  #!/usr/bin/perl
+  !/usr/bin/perl
 
   use PerlSpeak;
   
   my $ps = PerlSpeak->new();
   
   # Set properties
-  $ps->{tts_engine} = "festival"; # or cepstrel
+  $ps->{tts_engine} = "festival";  or cepstrel
   # Optionally set your own tts command use text_arg where the text goes
   $ps->{tts_command} => ""; 
   $ps->{no_dot_files} => 1;
   $ps->{hide_extentions} => 0;
     
    
-  # Speaking file selectors
-  my $file = $ps->filepicker($ENV{HOME}); # Returns a file.
-  my $dir = $ps->dirpicker($ENV{HOME}); # Returns a directory.
+  # Audio file selectors
+  my $file = $ps->filepicker($ENV{HOME});  Returns a file.
+  my $dir = $ps->dirpicker($ENV{HOME});  Returns a directory.
   
-  $ps->say("Hello World!"); # The computer talks.
+  $ps->say("Hello World!");  #The computer talks.
 
   # Returns the next character typed on the keyboard
   # May take 2 or 3 calls for escape sequences.
@@ -134,4 +163,16 @@ HOW TO USE
   };
 
 
- 
+SEE ALSO
+
+  More information can be found at the authors website http://www.joekamphaus.net
+  
+  Festival Speech Synthesis System is an open source tts system and is usually
+  included in most Linux distributions.
+  The Festival Speech Synthesis System can be found at 
+  http://www.cstr.ed.ac.uk/projects/festival/
+  
+  Cepstral voices are recomended if you don't mind paying for proprietary
+  software.  I mean no disrespect to any open source zealots, but cepstral 
+  has reasonably priced (I paid about $30) high quality proprietary voices.
+. Cepstral voices can be found at http://www.cepstral.com.
