@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
-$VERSION = '0.50';
+$VERSION = '0.51';
 
 
 sub new {
@@ -293,7 +293,7 @@ __END__
 
 =head1 NAME
 
- PerlSpeak - Perl Module for text to speach with festival, cepstral and others.
+ PerlSpeak - Perl Module for text to speech with festival, cepstral and others.
 
 =head1 SYNOPSIS
 
@@ -306,7 +306,7 @@ __END__
 
  $ps->say("Text to speak.");
  $ps->say("file_name");
- # The basic text to speach interface.
+ # The basic text to speech interface.
  
  $ps->readfile("file_name");
  # Reads contents of a text file.
@@ -372,7 +372,7 @@ __END__
  
 =head1 DESCRIPTION
 
-  PerlSpeak.pm is Perl Module for text to speach with festival or cepstral.
+  PerlSpeak.pm is Perl Module for text to speech with festival or cepstral.
   (Other tts systems may be used by setting the tts command properties).
   PerlSpeak.pm includes several useful interface methods like an audio file 
   selector and menu system. PerlSpeak.pm was developed to use in the 

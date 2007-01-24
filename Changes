@@ -31,7 +31,7 @@ Revision history for Perl extension PerlSpeak.
 
 
 
- 1/9/2007 ver 0.50
+ 1/20/2007 ver 0.50
  
  * Added funtionality for reading a text file. Method "say" will now take
     text or a file name as an argument. Also added method "readfile" which
@@ -54,3 +54,8 @@ Revision history for Perl extension PerlSpeak.
  * Changed required version of perl to 5.6. I see no reason why PerlSpeak.pm
     should not work under perl 5.6, however, this has not yet been tested. If
     you have problems with PerlSpeak on your version of perl let me know.
+
+
+1/24/2007 ver 0.51
+
+ * Fixed errors in documentation
