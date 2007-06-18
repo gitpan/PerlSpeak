@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
-$VERSION = '0.51';
+$VERSION = '1.0';
 
 
 sub new {
@@ -28,6 +28,7 @@ sub new {
 sub say {
 	my $self = shift;
 	my $arg = shift;
+	chomp $arg;
 	if (-e $arg){
 		$self->readfile($arg);
 		return 0;
@@ -432,7 +433,12 @@ __END__
  * Changed required version of perl to 5.6. I see no reason why PerlSpeak.pm
     should not work under perl 5.6, however, this has not yet been tested. If
     you have problems with PerlSpeak on your version of perl let me know.
-    
+
+
+ 6/17/2007 ver 1.0
+
+ * Fixed error message 'cannot stat filename' when making a cal to say()
+
     
 =head1 EXAMPLE
 

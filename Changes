@@ -59,3 +59,9 @@ Revision history for Perl extension PerlSpeak.
 1/24/2007 ver 0.51
 
  * Fixed errors in documentation
+
+
+ 6/17/2007 ver 1.0
+
+ * Fixed error message 'cannot stat filename' when making a cal to say()
+
