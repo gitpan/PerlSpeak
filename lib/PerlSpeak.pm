@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
-$VERSION = '1.0';
+$VERSION = '1.50';
 
 
 sub new {
@@ -14,14 +14,16 @@ sub new {
 		"tts_command" => "",
 		"tts_file_command" => "",
 		"file2wave_command" => "",
-		"make_readable" => "[_\\]",
+		"make_readable" => "[_\/]",
 		"no_dot_files" => 1,
 		"hide_extentions" => 0,
 		"browsable" => 1,
 		"dir_return" => 1,
 		"file_prefix" => "File",
 		"dir_prefix" => "Folder",
+		"echo_off" => 0,
 		@_};
+        $self->{tts_engine} = $ENV{TTS} if $ENV{TTS};
 	return bless $self, $pkg;
 }
 
@@ -29,10 +31,7 @@ sub say {
 	my $self = shift;
 	my $arg = shift;
 	chomp $arg;
-	if (-e $arg){
-		$self->readfile($arg);
-		return 0;
-	}
+	print "\n$arg\n" unless $self->{echo_off};
 	if ($self->{tts_command}){
 		my $command = $self->{tts_command};
 		$command =~s/text_arg/\"$arg\"/ ;
@@ -89,6 +88,7 @@ sub menu {
 	my %var_hash = @_;
 	my $count = 0;
 	my @keys = sort(keys %var_hash);
+	my $str = "";
 	my $command = "";
 	while (not $command){
 		$self->say($keys[$count]);
@@ -103,11 +103,45 @@ sub menu {
 				$count = scalar(@keys) - 1 if $count < 0;
 			}
 
-		}elsif ((ord($answ)==10) or (ord($answ)==89) or (ord($answ)==121)){
+		} elsif ($answ =~ /\d/) {
+			$count = $answ -1;
+		} elsif ($answ =~ /\w/) {
+			$str .= uc $answ;
+			foreach my $i (0..$#keys) {
+				my $test = uc $keys[$i];
+				$count = $i and last if ($test =~ /^\d\. $str/);
+			}
+		} elsif ((ord($answ)==10) or (ord($answ)==13) or (ord($answ)==89) or (ord($answ)==121)){
 			$command = 1;
 			&{$var_hash{$keys[$count]}};
 		}
 	}
+}
+
+sub menu_list {
+	my $self = shift;
+	my @lst;
+	while (my $word = shift) {
+		push @lst, $word;
+	}
+	my $count = 0;
+	while (1) {
+		$self->say($lst[$count]);
+		my $answ = $self->getch();
+		if (ord($answ)==27){
+			$answ  = $self->getch();
+			if (ord($answ)==91){
+				$answ  = $self->getch();
+				$count++ if $answ =~/B/;
+				$count-- if $answ =~/A/;
+				$count = 0 if $count >= $#lst;
+				$count = $#lst if $count < 0;
+			}
+		} elsif ((ord($answ)==10) or (ord($answ)==13) or (ord($answ)==89) or (ord($answ)==121)){
+			last;
+		}
+	}
+	return $lst[$count];
 }
 
 sub filepicker {
@@ -154,7 +188,7 @@ sub filepicker {
 							next;
 						}
 					}
-				}elsif ((ord($answ)==10) or (ord($answ)==89) or (ord($answ)==121)){
+				}elsif ((ord($answ)==10) or (ord($answ)==13) or (ord($answ)==89) or (ord($answ)==121)){
 					$file = "$d/$f";
 					return $file;
 				}elsif ((ord($answ)==85) or (ord($answ)==117)){
@@ -288,6 +322,46 @@ sub getch {
     	$term->setattr($fd_stdin, TCSANOW); 
         return $key;
 }
+
+sub getString {
+	my $self = shift;
+	my $prompt = shift;
+	$self->say($prompt);
+	my $ord = 0;
+	my $string;
+	my @chrlst;
+	until ($ord == 10){
+		my $chr = $self->getch();
+		$ord = ord($chr);
+		if ($ord == 127) {
+			pop @chrlst;
+			$self->say("Backspace");
+		} elsif ($ord == 32) {
+			$self->say("Space");
+			push @chrlst, $chr;
+		} elsif ($chr =~ /[\w,.-_\n]/) {
+			$self->say($chr);
+			push @chrlst, $chr;
+		} elsif ($ord < 28) {
+			return $ord;
+		}
+	}
+		
+	$string = join '', @chrlst;
+	chomp $string;
+	$self->say("You have entered $string. Is this correct?");
+	$self->confirm() ? return $string : return $self->getString($prompt);
+}
+
+sub confirm {
+	my $self = shift;
+	my $answ = $self->getch();
+	return 1 if $answ =~/[yY\n]/;
+	return 0 if $answ =~/[nN]/;
+	$self->say("Please answer Y for yes or N for no.");
+	return confirm();
+}
+
 1;
 
 __END__
@@ -326,7 +400,16 @@ __END__
  # Returns next character typed on keyboard
 
  $ps->menu("Text to speak" => $callback, ...) 
- # An audio menu executes callback when item is selected 
+ # An audio menu executes callback when item is selected
+
+ $item = $ps->menu_list(@list);
+ # Returns element of @list selected by user.
+
+ $string = $ps->getString();
+ # Returns a string speaking each character as you type. Also handles backspaces
+
+ $boolean = $ps->confirm();
+ # Returns boolean. Prompts user to enter Y for yes or N for no.  Enter also returns true.
 
 
 =head2 PROPERTIES
@@ -370,6 +453,8 @@ __END__
  $ps->{dir_prefix} => "text"; # Default is "Folder"
  # For filepicker and dirpicker. Sets text to speak prior to directory name. 
 
+ $ps->{echo_off} => $boolean; # Default is 0
+ # If set to true, turns off printing of text to screen.
  
 =head1 DESCRIPTION
 
@@ -404,9 +489,10 @@ __END__
     extensions with the filepicker method. Default is 0.
     (NOTE: If hiding extensions the no_dot_files property must be set to 1)
     
- * Added property "make_readable" which takes a regular expression as an argument.
-    PerlSpeak.pm substitues a space for characters that match expression.  The
-    default is "[_\\]" which substitutes a space for "\" and "_".
+ * Added property "make_readable" which takes a regular expression as an
+    argument. PerlSpeak.pm substitues a space for characters that match
+    expression. The default is "[_\\]" which substitutes a space for "\"
+    and "_".
 
 
 
@@ -433,13 +519,24 @@ __END__
  * Changed required version of perl to 5.6. I see no reason why PerlSpeak.pm
     should not work under perl 5.6, however, this has not yet been tested. If
     you have problems with PerlSpeak on your version of perl let me know.
-
-
- 6/17/2007 ver 1.0
-
- * Fixed error message 'cannot stat filename' when making a cal to say()
-
     
+    
+
+ 10/10/2007 ver 1.50
+  * Added boolean property echo_off to turn off printing of text said to screen.
+
+  * Added method menu_list(@list) Returns element of @list selected by user.
+
+  * Added method getString() Returns a string speaking each character as you
+    type. Also handles backspaces.
+
+  * Added method conirm(). Returns boolean. Prompts user to enter Y for yes
+    or N for no.  Enter also returns true.
+
+  * Added shortcuts to the menu() method. You can press the number of menu
+    index or the letter of the first word in menu item to jump to that item.
+
+
 =head1 EXAMPLE
 
   use PerlSpeak;
@@ -500,11 +597,14 @@ __END__
 
   More information can be found at the authors website http://www.joekamphaus.net
   
-  The Festival Speech Synthesis System can be found at 
+  The Festival Speech Synthesis System can be found at:
     http://www.cstr.ed.ac.uk/projects/festival/
-  
+
+  The Flite (festival-lite) Speech Synthesis System can be found at:
+    http://www.speech.cs.cmu.edu/flite/index.html
+
   Reasonably priced high quality proprietary software voices from Cepstral 
-  can be found at http://www.cepstral.com.
+  can be found at: http://www.cepstral.com.
 
 =head1 AUTHOR
 

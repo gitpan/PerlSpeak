@@ -65,3 +65,18 @@ Revision history for Perl extension PerlSpeak.
 
  * Fixed error message 'cannot stat filename' when making a cal to say()
 
+
+ 10/10/2007 ver 1.5
+ 
+  * Added boolean property echo_off to turn off printing of text said to screen.
+
+  * Added method menu_list(@list) Returns element of @list selected by user.
+
+  * Added method getString() Returns a string speaking each character as you
+    type. Also handles backspaces.
+
+  * Added method conirm(). Returns boolean. Prompts user to enter Y for yes
+    or N for no.  Enter also returns true.
+
+  * Added shortcuts to the menu() method. You can press the number of menu
+    index or the letter of the first word in menu item to jump to that item.
