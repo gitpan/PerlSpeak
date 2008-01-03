@@ -1,3 +1,4 @@
+
 Revision history for Perl extension PerlSpeak.
 
 0.01  Sat Jan  6 21:58:49 2007
@@ -80,3 +81,15 @@ Revision history for Perl extension PerlSpeak.
 
   * Added shortcuts to the menu() method. You can press the number of menu
     index or the letter of the first word in menu item to jump to that item.
+    
+    
+ 01/02/2008 ver 2.01
+ 
+  * Added suport for festival_server, festival_pipe, and espeak text to speech
+    engines. This includes several methods and properties such as voice, pitch
+    volume, and rate.
+    
+  * Added method getType(filename) Returns mime type for filename.
+
+
+

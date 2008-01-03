@@ -3,14 +3,16 @@ use 5.006;
 use strict;
 use warnings;
 use POSIX qw(:termios_h);
+use IO::Socket;
 use vars qw($VERSION);
-$VERSION = '1.50';
+$VERSION = '2.01';
+
 
 
 sub new {
 	my $pkg = shift;
 	my $self = {
-		"tts_engine" => "festival",
+		"tts_engine" => "festival_pipe",
 		"tts_command" => "",
 		"tts_file_command" => "",
 		"file2wave_command" => "",
@@ -22,14 +24,19 @@ sub new {
 		"file_prefix" => "File",
 		"dir_prefix" => "Folder",
 		"echo_off" => 0,
+                "voice" => "kal_diphone",
+                "rate" => 1,
+                "volume" => 1,
+                "pitch" => 50,
+                "lang" => "en",
 		@_};
-        $self->{tts_engine} = $ENV{TTS} if $ENV{TTS};
 	return bless $self, $pkg;
 }
 
 sub say {
 	my $self = shift;
 	my $arg = shift;
+        my $rep = shift || " ";
 	chomp $arg;
 	print "\n$arg\n" unless $self->{echo_off};
 	if ($self->{tts_command}){
@@ -40,7 +47,144 @@ sub say {
 		system "echo \"$arg\" | festival --tts";
 	}elsif ($self->{tts_engine} eq "cepstral"){
 		system "swift \"$arg\"";
-	}
+	}elsif ($self->{tts_engine} eq "espeak"){
+	        $arg =~s/!/\./g;
+		system "echo  \"$arg\" | espeak -v $self->{voice} -s $self->{rate} -a $self->{volume} -p $self->{pitch}";
+	}elsif ($self->{tts_engine} eq "festival_server") {
+            $arg =~ s/[\n\r"]/$rep/g;
+            $self->festival("(let ((utt (Utterance Text \"$arg\")))  (begin ($self->{voice}) (Parameter.set 'Duration_Stretch $self->{rate})  (utt.synth utt) (utt.wave.resample utt 8000) (utt.wave.rescale utt $self->{volume})  (utt.play utt)))\n");
+        }elsif ($self->{tts_engine} eq "festival_pipe") {
+            return unless $arg;
+            system("echo \"(let ((utt (Utterance Text \\\"$arg\\\")))  (begin ($self->{voice}) (Parameter.set 'Duration_Stretch $self->{rate})  (utt.synth utt) (utt.wave.resample utt 8000) (utt.wave.rescale utt $self->{volume})  (utt.play utt)))\" | festival --pipe");
+        }
+}
+
+sub festival {
+    my $self = shift;
+    my $arg = shift;
+    return unless $self->{tts_engine} eq "festival_server";
+    $self->{'handle'}->print("$arg\n");
+}
+
+sub config_festival { # voice, rate, volume
+    my $self = shift;
+    my $voice = shift;
+    my $rate = shift;
+    my $vol = shift;
+    return $self->config_voice($voice, $rate, $vol);
+}
+
+sub config_voice { # voice, rate, volume, pitch
+    my $self = shift;
+    my $voice = shift;
+    my $rate = shift;
+    my $vol = shift;
+    my $pitch = shift || 50;
+    return 0 unless $self->voice($voice);
+    return 0 unless $self->rate($rate);
+    return 0 unless $self->volume($vol);
+    return 0 unless $self->pitch($pitch);
+    return 1;
+}
+
+
+sub voice {
+    my $self = shift;
+    my $voice = shift;
+    $self->{voice} = $voice if $voice;
+    return $self->{voice};
+}
+
+sub pitch {
+    my $self = shift;
+    my $pitch = shift || "50";
+    $self->{pitch} = $pitch if $pitch;
+    return $self->{pitch};
+}
+
+sub rate {
+    my $self = shift;
+    my $rate = shift;
+    $self->{rate} = $rate if $rate;
+    return $self->{rate};
+}
+
+sub volume {
+    my $self = shift;
+    my $vol = shift;
+    $self->{volume} = $vol if $vol;
+    return $self->{volume};
+}
+
+sub get_voices {
+    my $self = shift;
+    my $line = "";
+    my @lst = ();
+    my @voice_lst = ();
+    if (($self->{tts_engine} eq "festival_server") || ($self->{tts_engine} eq "festival_pipe")) {
+        return unless $self->{handle}->connected();
+        
+        die "can't fork: $!" unless defined(my $kidpid = fork());
+
+        if ($kidpid) {
+            # parent copies the socket to standard output
+            while ($line !~ /voices/) {
+                $line = $self->{handle}->getline;
+            }
+            $line =~ s/[()\n\r]//g;
+            @lst = split " ", $line;
+            foreach (@lst) {
+                next if /\.|1|voices/;
+                push @voice_lst, $_ if /\w_\w/;
+            }
+
+            kill("TERM" => $kidpid);        # send SIGTERM to child
+            return \@voice_lst;
+        }
+        else {
+            $self->{handle}->print("voice-locations\n");
+        }
+    } elsif ($self->{tts_engine} eq "espeak") {
+        my @tmp = `espeak --voices=$self->{lang}`;
+        foreach my $line (@tmp) {
+        next if $line =~ /ender/;
+            $line =~ s/^ //;
+            my @word = split /\s/, $line;
+            foreach (@word) {
+                if (/\//) {
+                    push @voice_lst, $_;
+                    last;
+                }
+            }
+        }
+        return \@voice_lst;
+    }
+}
+
+sub festival_connect {
+    my $self = shift;
+    if ($self->{handle}) {
+        return 1 if $self->{handle}->connected();
+    }
+    $self->{host} = shift || "127.0.0.1";
+    $self->{port} = shift || 1314;
+    $self->{handle} = IO::Socket::INET->new(Proto     => "tcp",
+				PeerAddr  => $self->{host},
+				PeerPort  => $self->{port})
+    or die "
+  Can't connect to port $self->{port} on $self->{host}: $!
+  (Are you sure the server is running and accepting connections?)
+
+";
+return $self->{handle};
+}
+
+sub tts_engine {
+    my $self = shift;
+    if (my $tts = shift) {
+        $self->{tts_engine} = $tts;
+    }
+    return $self->{tts_engine};
 }
 
 sub readfile {
@@ -55,6 +199,17 @@ sub readfile {
 			system "festival --tts $arg";
 		}elsif ($self->{tts_engine} eq "cepstral"){
 			system "$self->{path_to_tts}swift -f $arg";
+		}elsif ($self->{tts_engine} eq "espeak"){
+			system "espeak -f $arg";
+                }elsif (($self->{tts_engine} eq "festival_server") or ($self->{tts_engine} eq "festival_pipe")) {
+                    open FH, "$arg" or die "ERROR! Could not open $arg: $!\n";
+                    my $txt = "";
+                    while (<FH>) {
+                        $txt .= $_;
+                    }
+                    $txt =~ s/[\n\r"`]/ /g;
+                    close FH;
+                    $self->say($txt);
 		}else {
 			$self->say("ERROR! with tts engine or tts  file command.") & die "ERROR! with tts_engine or tts_file_command.";
 		}	
@@ -67,6 +222,7 @@ sub file2wave {
 	my $self = shift;
 	my $in = shift;
 	my $out = shift;
+	my $play = shift or 1;
 	if (-e $in){
 		if ($self->{file2wave_command}){
 			my $command = $self->{file2wave_command};
@@ -76,17 +232,90 @@ sub file2wave {
 		} elsif ($self->{tts_engine} eq "festival") {
 			system "text2wave -otype riff -o $out $in";
 		} elsif ($self->{tts_engine} eq "cepstral") {
-			system "swift -f $in -o $out";
-		}
+			system "swift -m text -f $in -o $out";
+		} elsif ($self->{tts_engine} eq "espeak") {
+		        print "espeak -f $in -w $out\n";
+			system "espeak -f $in -w $out";
+		} elsif ($self->{tts_engine} eq "festival_server") {
+                        $self->file2wave_festival($in, $out, " ", $play);
+                } elsif ($self->{tts_engine} eq "festival_pipe") {
+                        $self->say("ERROR! TTS engine festival_pipe cannot convert text to wave files.  Use TTS engine festival_server instead.");
+                }
 	} else {
 		$self->say("ERROR! $in is not a file.") & die "ERROR! $in is not a file.";
 	}
 }
 
+sub file2wave_festival {
+	my $self = shift;
+	my $in = shift;
+	my $out = shift;
+        my $rep = shift;
+        my $play = shift;
+        $rep = " " unless $rep;
+
+    my ($host, $port, $kidpid, $handle, $line, $remains, $result);
+
+    my $wave_type = "riff";                 # the type of the audio files
+    my $file_stuff_key = "ft_StUfF_key";    # defined in speech tools
+
+    # tell the server to send us back a 'file' of the right type
+    $self->festival("(Parameter.set 'Wavefiletype '$wave_type)");
+
+    # split the program into two processes, identical twins
+    die "can't fork: $!" unless defined($kidpid = fork());
+
+    # the if{} block runs only in the parent process
+    if ($kidpid) {
+       # the parent handles the input so it can exit on quit
+        undef $line;
+        while (($line = $remains) || defined ($line = $self->{handle}->getline())) {
+            undef $remains;
+            if ($line eq "WV\n") { # we have a waveform coming
+                undef $result;
+                if ($out) {
+                    open(AUDIO, ">$out");
+                } else {
+                    die "ERROR! No output file argument";
+                }
+                while ($line = $self->{handle}->getline()) {
+                    if ($line =~ s/$file_stuff_key(.*)$//s) {
+                        $remains = $1;
+                        print AUDIO $line;
+                        last;
+                    }
+                    print AUDIO $line;
+                }
+                close AUDIO;
+                last;
+            }
+        }
+        kill("TERM" => $kidpid);        # send SIGTERM to child
+        system("mplayer $out") if $play;
+    } else {
+        my $txt = "";
+        open FH, "$in" or  die "ERROR! Could not open $in: $!\n";
+        while (<FH>) {
+            $txt .= $_;
+        }
+        $txt =~ s/[\n\r"]/$rep/g;
+        close FH;
+        $self->festival("(let ((utt (Utterance Text \"$txt\")))  (begin ($self->{voice}) (Parameter.set 'Duration_Stretch $self->{rate})  (utt.synth utt) (utt.wave.resample utt 8000) (utt.wave.rescale utt $self->{volume})  (utt.send.wave.client utt)))");
+    }
+}
+
+
+
+
 sub menu { 
 	my $self = shift;
-	my %var_hash = @_;
-	my $count = 0;
+	my $count = shift;
+	my @var = @_;
+	if ($#var % 2 == 0) {
+	   unshift @var, $count;
+	   $count = 0;
+	}
+	my %var_hash = @var;
 	my @keys = sort(keys %var_hash);
 	my $str = "";
 	my $command = "";
@@ -94,6 +323,7 @@ sub menu {
 		$self->say($keys[$count]);
 		my $answ = $self->getch();
 		if (ord($answ)==27){
+		        $str = "";
 			$answ  = $self->getch();
 			if (ord($answ)==91){
 				$answ  = $self->getch();
@@ -103,43 +333,57 @@ sub menu {
 				$count = scalar(@keys) - 1 if $count < 0;
 			}
 
-		} elsif ($answ =~ /\d/) {
+		} elsif ((ord($answ)==10) or (ord($answ)==13) or ($answ =~ /[yY]/)){
+			$command = 1;
+			&{$var_hash{$keys[$count]}};
+		} elsif (($answ =~ /\d/) and ($str eq "")) {
 			$count = $answ -1;
+                        $command = 1;
+			#&{$var_hash{$keys[$count]}};
 		} elsif ($answ =~ /\w/) {
 			$str .= uc $answ;
 			foreach my $i (0..$#keys) {
 				my $test = uc $keys[$i];
 				$count = $i and last if ($test =~ /^\d\. $str/);
 			}
-		} elsif ((ord($answ)==10) or (ord($answ)==13) or (ord($answ)==89) or (ord($answ)==121)){
-			$command = 1;
-			&{$var_hash{$keys[$count]}};
 		}
 	}
+	return $count;
 }
 
 sub menu_list {
 	my $self = shift;
-	my @lst;
-	while (my $word = shift) {
-		push @lst, $word;
-	}
+	my @lst = @_;
 	my $count = 0;
+	my $str = "";
 	while (1) {
 		$self->say($lst[$count]);
 		my $answ = $self->getch();
 		if (ord($answ)==27){
+		        $str = "";
 			$answ  = $self->getch();
 			if (ord($answ)==91){
 				$answ  = $self->getch();
 				$count++ if $answ =~/B/;
 				$count-- if $answ =~/A/;
-				$count = 0 if $count >= $#lst;
+				$count = 0 if $count > $#lst;
 				$count = $#lst if $count < 0;
 			}
 		} elsif ((ord($answ)==10) or (ord($answ)==13) or (ord($answ)==89) or (ord($answ)==121)){
 			last;
-		}
+		} elsif ($answ =~ /\w/) {
+		   $str .= lc $answ;
+		   $count = 0;
+		   foreach (@lst) {
+		      my $test = lc $_;
+		      if ($test =~ /^$str/) {
+		          last;
+		      } else {
+		          $count++;
+		          $count = $#lst if $count > $#lst;
+		      }
+		   }
+	        }
 	}
 	return $lst[$count];
 }
@@ -168,9 +412,19 @@ sub filepicker {
 				$flter =~ s/_/ /g;
 				$self->say("$self->{dir_prefix} $flter?");
 				$answ = $self->getch();
+                                if ($answ =~ /[a-zA-Z0-9]/){
+                                    for( my $c = 0; $c < $#dirlst; $c++) {
+                                        if ($dirlst[$c] =~ /^$answ/) {
+                                            $count = $c;
+                                            last;
+                                        }
+                                    }
+                                    next;
+                                } 
 				if (ord($answ)==27){
 					$answ  = $self->getch();
 					if (ord($answ)==91){
+					       
 						$answ  = $self->getch();
 						$count++ if $answ =~/B/;
 						$count-- if $answ =~/A/;
@@ -209,6 +463,15 @@ sub filepicker {
 				}
 				$self->say("$self->{file_prefix} $flter?");
 				$answ = $self->getch();
+                                if ($answ =~ /[a-zA-Z0-9]/){
+                                    for( my $c = 0; $c < $#dirlst; $c++) {
+                                        if ($dirlst[$c] =~ /^$answ/) {
+                                            $count = $c;
+                                            last;
+                                        }
+                                    }
+                                    next;
+                                } 
 				if (ord($answ)==27){
 					$answ  = $self->getch();
 					if (ord($answ)==91){
@@ -241,6 +504,7 @@ sub filepicker {
 	return $file;
 }
 
+
 sub dirpicker {
 	my $self = shift;
 	my $d = shift;
@@ -254,11 +518,9 @@ sub dirpicker {
 		closedir DH;
 		while ($folder eq "") {
 			my $f = $dirlst[$count];
-			if ($f =~ /^\./){
-				if ($f eq "." or $f eq ".." or $self->{no_dot_files}){
-					$count++;
-					next;
-				}
+			if (($f eq ".") or ($f eq "..") or ($self->{no_dot_files} and $f =~/^\./)) {
+				$count++;
+				next;
 			}
 			if (-d"$d/$f"){
 				$self->say($f);
@@ -272,7 +534,7 @@ sub dirpicker {
 						$count = 0 if $count == scalar(@dirlst);
 						$count = scalar(@dirlst) - 1 if $count < 0;
 						if ($answ =~/C/){
-							$folder = "$d/$f";
+							$folder = $self->dirpicker("$d/$f");
 						}
 						if ($answ =~/D/){
 							@lst = split '/', $d;
@@ -290,19 +552,120 @@ sub dirpicker {
 					pop @lst;
 					$d = join '/', @lst;
 					$d = '/' if $d eq "";
-					next;
+					last;
 				}
 
 			}else{
+                                $count++;
+                                if ($count > $#dirlst) {
+                                    $self->say("There are no folders in this directory. Moving up one level.");
+				    @lst = split '/', $d;
+				    pop @lst;
+				    $d = join '/', @lst;
+				    $d = '/' if $d eq "";
+				    last;
+	                        }
 				next;
 			}
 		}
 	}
-	if ($folder eq "") {
-		$self->say("There are no folders to select.");
-	}
 	return $folder;
 }
+
+sub fileselect {
+    my $self = shift;
+    my $dir = shift;
+    my @prompt = @_;
+    $prompt[0] = "Enter a file filter" unless $prompt[0];
+    $prompt[1] = "Press F1 for help" unless $prompt[1];
+    $prompt[2] = "Spacebar Selects or Deselects a file... Press Control-A to select all... Press enter key when done... Press F1 for help" unless $prompt[2];
+    chdir $dir;
+    my $filter = $self->getString($prompt[0], 1);
+    my @lst = `ls $filter`;
+    unless ($lst[0]) {
+        $self->say("No Files Found.");
+        return 0;
+    }
+    my @counts;
+    my $count = 0;
+    my $str = "";
+    my $speech_flag = 1;
+    $self->say($prompt[1]) if $prompt[1];
+    while (1) {
+        my $fname = "";
+        chomp $lst[$count];
+        print "$dir/$lst[$count]\n";
+        if (-d "$dir/$lst[$count]") {
+        print "DIR\n";
+            $fname = "$self->{dir_prefix} $lst[$count]";
+        } elsif (-f "$dir/$lst[$count]") {
+        print "FILE\n";
+            $fname = "$self->{file_prefix} $lst[$count]";
+        }
+        $self->say($fname) if $speech_flag;
+        my $answ = $self->getch();
+        if ($answ eq " ") { # Select or Deselect a file
+            push @counts, $count;
+            $speech_flag = 0;
+        } elsif (ord($answ)==1) { # Control-A
+            @counts = ();
+            my $i;
+            foreach (@lst) {
+                push @counts, $i++;
+            }
+            $speech_flag = 0;
+        } elsif (ord($answ)==27){
+            $str = "";
+            $answ  = $self->getch();
+            if (ord($answ)==91){
+                $answ  = $self->getch();
+                $count++ if $answ =~/B/;
+		$count-- if $answ =~/A/;
+		$count = 0 if $count > $#lst;
+		$count = $#lst if $count < 0;
+		$speech_flag = 1;
+		if (ord($answ)==49){
+                    $a = $self->getch();
+                    $b = $self->getch() if ord($a) == 49;
+                    if (ord($b) == 126) { # F1 pressed
+                        if ($prompt[2] ne 'F1') {
+                            $self->say($prompt[2]);
+                        } else {
+                            return '^F1 Pressed^';
+                        }
+                    }
+                }
+       	    }
+        } elsif ((ord($answ)==10) or (ord($answ)==13)) {
+            last;
+        } elsif ($answ =~ /\w/) {
+	   $str .= lc $answ;
+	   $count = 0;
+	   foreach (@lst) {
+	      my $test = lc $_;
+	      if ($test =~ /^$str/) {
+	          last;
+	      } else {
+	          $count++;
+	          $count = $#lst if $count > $#lst;
+	      }
+	   }
+	   $speech_flag = 1;
+        }
+    }
+        my %hash;
+        my @file_list;
+	foreach (@counts) {
+	   $hash{$_}++;
+	}
+	foreach (keys %hash) {
+	   if ($hash{$_} % 2 == 1) { # File is selected
+	       push @file_list, $lst[$_];
+	   }
+        }
+        return @file_list;
+}
+
 
 sub getch {
 	my $self = shift;
@@ -326,11 +689,12 @@ sub getch {
 sub getString {
 	my $self = shift;
 	my $prompt = shift;
-	$self->say($prompt);
+        my $no_confirm = shift;
+	$self->say($prompt) if $prompt;
 	my $ord = 0;
 	my $string;
 	my @chrlst;
-	until ($ord == 10){
+	while (1){
 		my $chr = $self->getch();
 		$ord = ord($chr);
 		if ($ord == 127) {
@@ -339,28 +703,280 @@ sub getString {
 		} elsif ($ord == 32) {
 			$self->say("Space");
 			push @chrlst, $chr;
-		} elsif ($chr =~ /[\w,.-_\n]/) {
-			$self->say($chr);
+                } elsif ($ord == 46) {
+                       $self->say("dot");
 			push @chrlst, $chr;
+                } elsif ($ord == 45) {
+                       $self->say("dash");
+			push @chrlst, $chr;
+                } elsif ($ord == 10){
+                        last;
 		} elsif ($ord < 28) {
 			return $ord;
+		} else {
+			$self->say($chr);
+			push @chrlst, $chr;
 		}
 	}
 		
 	$string = join '', @chrlst;
 	chomp $string;
-	$self->say("You have entered $string. Is this correct?");
-	$self->confirm() ? return $string : return $self->getString($prompt);
+        if ($no_confirm){
+            return $string;
+        } else {
+            $self->say("You have entered $string. Is this correct?");
+            $self->confirm() ? return $string : return $self->getString($prompt);
+        }
 }
 
 sub confirm {
 	my $self = shift;
+	my $txt = shift;
+	$self->say($txt) if $txt;
 	my $answ = $self->getch();
 	return 1 if $answ =~/[yY\n]/;
 	return 0 if $answ =~/[nN]/;
 	$self->say("Please answer Y for yes or N for no.");
-	return confirm();
+	return $self->confirm();
 }
+
+sub getType {
+	my $self = shift;
+	my $fname=shift;
+	my %Type = (
+	'HTML', "text/html",
+	'HTM', "text/html",
+	'STM', "text/html",
+	'SHTML', "text/html",
+	'TXT', "text/plain",
+	'PREF', "text/plain",
+	'AIS', "text/plain",
+	'RTX', "text/richtext",
+	'TSV', "text/tab-separated-values",
+	'NFO', "text/warez-info",
+	'ETX', "text/x-setext",
+	'SGML', "text/x-sgml",
+	'SGM', "text/x-sgml",
+	'TALK', "text/x-speech",
+	'CGI', "text/plain", # we want these two as text files
+	'PL', "text/plain", # and not application/x-httpd-cgi
+	'PHP', "text/plain",
+	#-------------------------------------<IMAGE>----
+	'COD', "image/cis-cod",
+	'FID', "image/fif",
+	'GIF', "image/gif",
+	'ICO', "image/ico",
+	'IEF', "image/ief",
+	'JPEG', "image/jpeg",
+	'JPG', "image/jpeg",
+	'JPE', "image/jpeg",
+	'PNG', "image/png",
+	'TIF', "image/tiff",
+	'TIFF', "image/tiff",
+	'MCF', "image/vasa",
+	'RAS', "image/x-cmu-raster",
+	'CMX', "image/x-cmx",
+	'PCD', "image/x-photo-cd",
+	'PNM', "image/x-portable-anymap",
+	'PBM', "image/x-portable-bitmap",
+	'PGM', "image/x-portable-graymap",
+	'PPM', "image/x-portable-pixmap",
+	'RGB', "image/x-rgb",
+	'XBM', "image/x-xbitmap",
+	'XPM', "image/x-xpixmap",
+	'XWD', "image/x-xwindowdump",
+	#-------------------------------------<APPS>-----
+	'BZ2', "application/x-bzip2",
+	'EXE', "application/octet-stream",
+	'BIN', "application/octet-stream",
+	'DMS', "application/octet-stream",
+	'LHA', "application/octet-stream",
+	'CLASS', "application/octet-stream",
+	'DLL', "application/octet-stream",
+	'AAM', "application/x-authorware-map",
+	'AAS', "application/x-authorware-seg",
+	'AAB', "application/x-authorware-bin",
+	'VMD', "application/vocaltec-media-desc",
+	'VMF', "application/vocaltec-media-file",
+	'ASD', "application/astound",
+	'ASN', "application/astound",
+	'DWG', "application/autocad",
+	'DSP', "application/dsptype",
+	'DFX', "application/dsptype",
+	'EVY', "application/envoy",
+	'SPL', "application/futuresplash",
+	'IMD', "application/immedia",
+	'HQX', "application/mac-binhex40",
+	'CPT', "application/mac-compactpro",
+	'DOC', "application/msword",
+	'ODA', "application/oda",
+	'PDF', "application/pdf",
+	'AI', "application/postscript",
+	'EPS', "application/postscript",
+	'PS', "application/postscript",
+	'PPT', "application/powerpoint",
+	'RTF', "application/rtf",
+	'APM', "application/studiom",
+	'XAR', "application/vnd.xara",
+	'ANO', "application/x-annotator",
+	'ASP', "application/x-asap",
+	'CHAT', "application/x-chat",
+	'BCPIO', "application/x-bcpio",
+	'VCD', "application/x-cdlink",
+	'TGZ', "application/x-compressed",
+	'Z', "application/x-compress",
+	'CPIO', "application/x-cpio",
+	'PUZ', "application/x-crossword",
+	'CSH', "application/x-csh",
+	'DCR', "application/x-director",
+	'DIR', "application/x-director",
+	'DXR', "application/x-director",
+	'FGD', "application/x-director",
+	'DVI', "application/x-dvi",
+	'LIC', "application/x-enterlicense",
+	'EPB', "application/x-epublisher",
+	'FAXMGR', "application/x-fax-manager",
+	'FAXMGRJOB', "application/x-fax-manager-job",
+	'FM', "application/x-framemaker",
+	'FRAME', "application/x-framemaker",
+	'FRM', "application/x-framemaker",
+	'MAKER', "application/x-framemaker",
+	'GTAR', "application/x-gtar",
+	'GZ', "application/x-gzip",
+	'HDF', "application/x-hdf",
+	'INS', "application/x-insight",
+	'INSIGHT', "application/x-insight",
+	'INST', "application/x-install",
+	'IV', "application/x-inventor",
+	'JS', "application/x-javascript",
+	'SKP', "application/x-koan",
+	'SKD', "application/x-koan",
+	'SKT', "application/x-koan",
+	'SKM', "application/x-koan",
+	'LATEX', "application/x-latex",
+	'LICMGR', "application/x-licensemgr",
+	'MAIL', "application/x-mailfolder",
+	'MIF', "application/x-mailfolder",
+	'NC', "application/x-netcdf",
+	'CDF', "application/x-netcdf",
+	'SDS', "application/x-onlive",
+	'SGI-LPR', "application/x-sgi-lpr",
+	'SH', "application/x-sh",
+	'SHAR', "application/x-shar",
+	'SWF', "application/x-shockwave-flash",
+	'SPRITE', "application/x-sprite",
+	'SPR', "application/x-sprite",
+	'SIT', "application/x-stuffit",
+	'SV4CPIO', "application/x-sv4cpio",
+	'SV4CRC', "application/x-sv4crc",
+	'TAR', "application/x-tar",
+	'TARDIST', "application/x-tardist",
+	'TCL', "application/x-tcl",
+	'TEX', "application/x-tex",
+	'TEXINFO', "application/x-texinfo",
+	'TEXI', "application/x-texinfo",
+	'T', "application/x-troff",
+	'TR', "application/x-troff",
+	'TROFF', "application/x-troff",
+	'MAN', "application/x-troff-man",
+	'ME', "application/x-troff-me",
+	'MS', "application/x-troff-ms",
+	'TVM', "application/x-tvml",
+	'TVM', "application/x-tvml",
+	'USTAR', "application/x-ustar",
+	'SRC', "application/x-wais-source",
+	'WKZ', "application/x-wingz",
+	'ZIP', "application/x-zip-compressed",
+	'ZTARDIST', "application/x-ztardist",
+	#-------------------------------------<AUDIO>----
+	'AU', "audio/basic",
+	'SND', "audio/basic",
+	'ES', "audio/echospeech",
+	'MID', "audio/midi",
+	'KAR', "audio/midi",
+	'MPGA', "audio/mpeg",
+	'MP2', "audio/mpeg",
+	'TSI', "audio/tsplayer",
+	'VOX', "audio/voxware",
+	'AIF', "audio/x-aiff",
+	'AIFC', "audio/x-aiff",
+	'AIFF', "audio/x-aiff",
+	'MID', "audio/x-midi",
+	'MP3', "audio/x-mpeg",
+	'MP2A', "audio/x-mpeg2",
+	'MPA2', "audio/x-mpeg2",
+	'M3U', "audio/x-mpegurl",
+	'MP3URL', "audio/x-mpegurl",
+	'PAT', "audio/x-pat",
+	'RAM', "audio/x-pn-realaudio",
+	'RPM', "audio/x-pn-realaudio-plugin",
+	'RA', "audio/x-realaudio",
+	'SBK', "audio/x-sbk",
+	'STR', "audio/x-str",
+	'WAV', "audio/x-wav",
+	#-------------------------------------<VIDEO>----
+	'MPEG', "video/mpeg",
+	'MPG', "video/mpeg",
+	'MPE', "video/mpeg",
+	'QT', "video/quicktime",
+	'MOV', "video/quicktime",
+	'VIV', "video/vivo",
+	'VIVO', "video/vivo",
+	'MPS', "video/x-mpeg-system",
+	'SYS', "video/x-mpeg-system",
+	'MP2V', "video/x-mpeg2",
+	'MPV2', "video/x-mpeg2",
+	'AVI', "video/x-msvideo",
+	'MV', "video/x-sgi-movie",
+	'MOVIE', "video/x-sgi-movie",
+	#-------------------------------------<EXTRA>----
+	'PDB', "chemical/x-pdb",
+	'XYZ', "chemical/x-pdb",
+	'CHM', "chemical/x-cs-chemdraw",
+	'SMI', "chemical/x-daylight-smiles",
+	'SKC', "chemical/x-mdl-isis",
+	'MOL', "chemical/x-mdl-molfile",
+	'RXN', "chemical/x-mdl-rxn",
+	'SMD', "chemical/x-smd",
+	'ACC', "chemical/x-synopsys-accord",
+	'ICE', "x-conference/x-cooltalk",
+	'SVR', "x-world/x-svr",
+	'WRL', "x-world/x-vrml",
+	'VRML', "x-world/x-vrml",
+	'VRJ', "x-world/x-vrt",
+	'VRJT', "x-world/x-vrt",
+	#-----------------------------------<Windows Media Files>
+	'ASX', "video/x-ms-asf",
+	'WMA', "audio/x-ms-wma",
+	'WAX', "audio/x-ms-wax",
+	'WMV', "audio/x-ms-wmv",
+	'WVX', "video/x-ms-wvx",
+	'WM', "video/x-ms-wm",
+	'WMX', "video/x-ms-wmx",
+	'WMZ', "application/x-ms-wmz",
+	'WMD', "application/x-ms-wmd",
+        #------------------------------------<Open Office Files>
+        'ODT', "application/vnd.oasis.opendocument.text",
+        'OTT', "application/vnd.oasis.opendocument.text-template",
+        'OTH', "application/vnd.oasis.opendocument.text-web",
+        'ODM', "application/vnd.oasis.opendocument.text-master",
+        'ODG', "application/vnd.oasis.opendocument.graphics",
+        'OTG', "application/vnd.oasis.opendocument.graphics-template",
+        'ODP', "application/vnd.oasis.opendocument.presentation",
+        'OTP', "application/vnd.oasis.opendocument.presentation-template",
+        'ODS', "application/vnd.oasis.opendocument.spreadsheet",
+        'OTS', "application/vnd.oasis.opendocument.spreadsheet-template",
+        'ODC', "application/vnd.oasis.opendocument.chart",
+        'ODF', "application/vnd.oasis.opendocument.formula",
+        'ODB', "application/vnd.oasis.opendocument.database",
+        'ODI', "application/vnd.oasis.opendocument.image",
+	);
+	my @tmp = split(/\./, $fname);
+	my $ext = pop @tmp;
+	$ext = uc $ext;
+	$Type{$ext}?return $Type{$ext}:return "unknown/unknown";
+}
+
 
 1;
 
@@ -368,7 +984,7 @@ __END__
 
 =head1 NAME
 
- PerlSpeak - Perl Module for text to speech with festival, cepstral and others.
+ PerlSpeak - Perl Module for text to speech with festival, espeak, cepstral and others.
 
 =head1 SYNOPSIS
 
@@ -399,18 +1015,46 @@ __END__
  $chr = $ps->getchr(); 
  # Returns next character typed on keyboard
 
- $ps->menu("Text to speak" => $callback, ...) 
+ $ps->menu($prompt => $callback, ...)
  # An audio menu executes callback when item is selected
 
  $item = $ps->menu_list(@list);
  # Returns element of @list selected by user.
 
- $string = $ps->getString();
+ $string = $ps->getString([$prompt]);
  # Returns a string speaking each character as you type. Also handles backspaces
 
- $boolean = $ps->confirm();
+ $boolean = $ps->confirm([$prompt]);
  # Returns boolean. Prompts user to enter Y for yes or N for no.  Enter also returns true.
 
+ $ps->config_voice("voice_name", $voice_rate, $voice_volume, $voice_pitch);
+ # Configures voice. Excepts standard parameters for festival and espeak.
+ # For festival:
+ #   The voice rate values should be between 0.50 and 2.00;
+ #   The voice volume values should be between 0.33 and 6.00;
+ #   The voice pitch is not used.
+ # For espeak:
+ #   The voice rate values are words per minute. 160 is a standard setting;
+ #   The voice volume values should be between 0 and 20. 10 is a standard setting;
+ #   The voice pitch values should be between 0 and 99. 50 is a standard setting;
+ 
+ $ps->config_festival("voice_name", $voice_speed, $voice_volume);
+ # See as config_voice above.
+
+ $tts = $ps->tts_engine(["tts_engine"]); # Gets or Sets tts_engine property.
+ $voice = $ps->set_voice(["voice_name"]); # See config_voice above.
+ $rate = $ps->set_rate([$rate]); # See config_voice above.
+ $volume = $ps->set_volume([$volume]); # See config_voice above.
+ $pitch = $ps->set_pitch([$pitch]); # See config_voice above.
+
+ $voices = $ps->get_voices();
+ # Returns a refrence to a list of available voices in the language of $self->{lang} property.
+
+ $ps->festival_connect([$host, $port]);
+ # Must be used if using festival_server as the tts_engine.
+
+ $mime_type = $ps->getType($filename); # Returns Mime Type for $filename.
+ 
 
 =head2 PROPERTIES
 
@@ -418,8 +1062,9 @@ __END__
  # if you want to use a tts system other than festival or cepstral. The rest
  # of the properties are included because I found them usefull in some instances.
 
- $ps->{tts_engine} => "festival" or "cepstral"; # Default is "festival"
- # Other tts engines can be used by using the tts command properties.
+ $ps->{tts_engine} => $text; # Default is "festival_pipe"
+ # Valid values are "festival", "festival_server", "festival_pipe", "espeak" or
+ # "cepstral" Other tts engines can be used by using the tts command properties.
  
  $ps->{tts_command} => "command text_arg"; # Default is ""
  # Command to read a text string. "text_arg" = text string.
@@ -455,7 +1100,21 @@ __END__
 
  $ps->{echo_off} => $boolean; # Default is 0
  # If set to true, turns off printing of text to screen.
- 
+
+ $ps->{voice} => $text; # # Use set_voice($voice) instead.
+ # Must be set to a valid voice name for tts_engine used. This is especially
+ # true for festival_server and festival_pipe
+
+ $ps->{lang} => $text; # Default is "en" for english.
+ # Used only if espeak is the tts_engine.
+
+ $ps->{rate} => $double; # Use set_rate($rate) instead.
+
+ $ps->{volume} => $double; # Use set_volume($volume) instead.
+
+ $ps->{pitch} => $double; # Use set_pitch($pitch) instead.
+
+
 =head1 DESCRIPTION
 
   PerlSpeak.pm is Perl Module for text to speech with festival or cepstral.
@@ -536,8 +1195,19 @@ __END__
   * Added shortcuts to the menu() method. You can press the number of menu
     index or the letter of the first word in menu item to jump to that item.
 
+ 01/02/2008 ver 2.01
+  * Added suport for festival_server, festival_pipe, and espeak text to speech
+    engines. This includes several methods and properties such as voice, pitch
+    volume, and rate.
+
+  * Added method getType(filename) Returns mime type for filename.
+
+
 
 =head1 EXAMPLE
+
+  # Several examples can be found in the example directory included with the
+  # tarball for this module.
 
   use PerlSpeak;
   
@@ -600,11 +1270,15 @@ __END__
   The Festival Speech Synthesis System can be found at:
     http://www.cstr.ed.ac.uk/projects/festival/
 
-  The Flite (festival-lite) Speech Synthesis System can be found at:
-    http://www.speech.cs.cmu.edu/flite/index.html
+  The eSpeak text to speech synthesizer can be found at:
+    http://espeak.sourceforge.net/
 
   Reasonably priced high quality proprietary software voices from Cepstral 
   can be found at: http://www.cepstral.com.
+
+  The Flite (festival-lite) Speech Synthesis System can be found at:
+    http://www.speech.cs.cmu.edu/flite/index.html
+
 
 =head1 AUTHOR
 
@@ -614,9 +1288,14 @@ Joe Kamphaus, E<lt>joe@joekamphaus.netE<gt>
 
 Copyright (C) 2007 by Joe Kamphaus
 
-This library is free software; you can redistribute it and/or modify
-it under the same terms as Perl itself, either Perl version 5.6 or,
-at your option, any later version of Perl 5 you may have available.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; version 2 of the License.
+
+# This module is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
 
 
 =cut
